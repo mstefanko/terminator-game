@@ -4,11 +4,19 @@ A single-file arcade fan game inspired by Terminator 2: Judgment Day. Sneak thro
 
 **[Play in your browser](https://mstefanko.github.io/terminator-game/)**
 
-Use a desktop browser with a mouse and keyboard. The layout fits phone-sized screens, but full touch gameplay controls are not implemented yet. Click or press a key to start and enable audio. The game draws its own pixel art, embeds the cinematic portraits, and synthesizes its soundtrack; no installation or asset downloads are needed.
+Play with a mouse and keyboard on desktop, or touch controls on a phone or tablet. Click, tap, or press a key to start and enable audio. The game draws its own pixel art, embeds the cinematic portraits, and synthesizes its soundtrack; no installation or asset downloads are needed.
 
 ## Controls
 
-Each level's briefing shows the controls for that character and encounter.
+Each level's briefing shows the controls for that character and encounter. Desktop controls and game rules are unchanged.
+
+### Phone and tablet
+
+Touch controls appear automatically. Drag on the game to move or aim; lift your finger to stop. Use the labeled buttons for attacks and abilities. With the T-800, hold **FIRE** to aim and release to shoot; the minigun fires while held. You can steer with one finger and operate buttons with another. Your last aim point stays available for firing or throwing a grenade after you lift your steering finger.
+
+Buttons sit below the game in portrait and beside it in landscape, leaving the playfield unobstructed. **PAUSE**, **NEXT**, and **HOLD TO SKIP** handle menus and cutscenes. Rotating, switching apps, or canceling a touch clears held actions. Mouse and keyboard continue working on hybrid devices. Add `?touch=1` to the URL to preview the touch layout on desktop.
+
+### Mouse and keyboard
 
 | Action | Control |
 | --- | --- |
@@ -34,6 +42,10 @@ Sarah unlocks after completing the game. Progress and high scores are saved in y
 ## Run locally
 
 Open `index.html` in a modern browser. The game is self-contained, with no build step, packages, server, or API keys.
+
+## Input regression checks
+
+Run `node tests/mobile-input.cjs` with Node.js. No packages are required. The checks cover steering, multiple fingers, fast fire taps, canceled holds, pause transitions, menu taps, and actions for each character and chapter. Test physical phones separately for device-specific touch and browser behavior.
 
 ## Publish updates
 

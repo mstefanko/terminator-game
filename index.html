@@ -8,12 +8,40 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   body { height: 100dvh; display: flex; align-items: center; justify-content: center; }
-  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; background: #000; }
+  #game-stage { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  [hidden] { display:none !important; }
+  .touch-mode { box-sizing:border-box; padding:8px; padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); }
+  .touch-mode #game-stage { gap:12px; }
+  .touch-mode canvas { touch-action:none; user-select:none; -webkit-user-select:none; }
+  #touch-controls { flex:none; box-sizing:border-box; overflow-y:auto; overscroll-behavior:contain; color:#bcbcbc; font:12px/1.4 ui-monospace,monospace; }
+  #touch-help { margin:0 0 8px; min-height:34px; }
+  #touch-buttons { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+  #touch-controls button { min-width:0; min-height:46px; padding:6px; border:1px solid #737373; border-radius:5px; background:#191b24; color:#f8d878; font:700 12px/1.15 ui-monospace,monospace; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  #touch-controls button:disabled { color:#777; border-color:#393939; }
+  #touch-controls button.pressed { background:#574516; border-color:#f8d878; }
+  #touch-controls button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+  @media (orientation:landscape) { .touch-mode #game-stage { flex-direction:row; } .touch-mode #touch-buttons { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  canvas { touch-action:none; display: block; image-rendering: pixelated; image-rendering: crisp-edges; background: #000; }
 </style>
 </head>
 <body>
+<main id="game-stage">
 <canvas id="game" width="256" height="176"></canvas>
 <canvas id="cinema" width="512" height="352" style="display:none" aria-label="Story cinematic"></canvas>
+
+<section id="touch-controls" hidden aria-label="Touch game controls"><p id="touch-help"></p><div id="touch-buttons">
+<button type="button" id="touch-attack" hidden></button>
+<button type="button" id="touch-special" hidden></button>
+<button type="button" id="touch-secondary" hidden></button>
+<button type="button" id="touch-item" hidden></button>
+<button type="button" id="touch-swap" hidden></button>
+<button type="button" id="touch-pause" hidden></button>
+<button type="button" id="touch-next" hidden></button>
+<button type="button" id="touch-menu" hidden></button>
+<button type="button" id="touch-skip" hidden></button>
+<button type="button" id="touch-mute" hidden></button>
+</div></section>
+</main>
 <script>
 'use strict';
 // ===================== CONFIG =====================
@@ -769,20 +797,20 @@ const canvas = document.getElementById('game');
 const bctx = canvas.getContext('2d');
 const cinemaCanvas = document.getElementById('cinema');
 const cineCtx = cinemaCanvas.getContext('2d');
-cinemaCanvas.addEventListener('mousedown', () => audioInit());
-cinemaCanvas.addEventListener('click', () => { INPUT.clicks.push({x:0,y:0}); });
+cinemaCanvas.addEventListener('mousedown', e => { if (!touchMouse(e)) audioInit(); });
+cinemaCanvas.addEventListener('click', e => { if (!touchMouse(e)) INPUT.clicks.push({x:0,y:0}); });
 cinemaCanvas.addEventListener('contextmenu', e => e.preventDefault());
 // Convert a mouse event to buffer coordinates using the canvas bounding rect.
 function toBuffer(e){
   const r = canvas.getBoundingClientRect();
   return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
 }
-canvas.addEventListener('mousemove', e => { INPUT.mouse = toBuffer(e); });
-canvas.addEventListener('mouseleave', () => { INPUT.mouse = null; });
-canvas.addEventListener('mousedown', e => { audioInit(); if (e.button === 0) INPUT.held = true; });
-window.addEventListener('mouseup', e => { if (e.button === 0) INPUT.held = false; });
-canvas.addEventListener('click', e => { INPUT.clicks.push(toBuffer(e)); });
-canvas.addEventListener('contextmenu', e => { e.preventDefault(); INPUT.special.push(true); });
+canvas.addEventListener('mousemove', e => { if (!touchMouse(e)){ if (TOUCH.using){touchCancel();TOUCH.using=false;} INPUT.mouse=toBuffer(e); if(TOUCH.enabled)TOUCH.aim={...INPUT.mouse}; } });
+canvas.addEventListener('mouseleave', e => { if (!touchMouse(e)) INPUT.mouse = null; });
+canvas.addEventListener('mousedown', e => { if (touchMouse(e)) return; audioInit(); if (e.button === 0) INPUT.held = true; });
+window.addEventListener('mouseup', e => { if (!touchMouse(e) && e.button === 0) INPUT.held = false; });
+canvas.addEventListener('click', e => { if (!touchMouse(e)) INPUT.clicks.push(toBuffer(e)); });
+canvas.addEventListener('contextmenu', e => { e.preventDefault(); if (!touchMouse(e)) INPUT.special.push(true); });
 window.addEventListener('keydown', e => {
   audioInit();
   const k = e.key === ' ' ? 'enter' : e.key.toLowerCase();
@@ -800,6 +828,187 @@ window.addEventListener('keyup', e => {
   if (k === 'enter' || k === 'escape') INPUT.down[k] = false;
 });
 window.addEventListener('blur', () => { INPUT.held = false; INPUT.down = {}; INPUT.keys.push('blur'); });
+
+// ===================== OPTIONAL TOUCH ADAPTER =====================
+// Queues the same inputs as desktop. No combat, cooldown, movement or AI rules change.
+const TOUCH = {
+  enabled: new URLSearchParams(location.search).get('touch') === '1' || !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches),
+  using: false, steer: null, aim: null, fire: null, fireHeld: false, fireSeen: false, releaseFire: false,
+  skip: null, owners: new Map(), mouseUntil: 0, state: '', layout: '', panel: null, buttons: {},
+};
+function touchMouse(e){ return !!(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) || performance.now() < TOUCH.mouseUntil; }
+function touchBlockMouse(){ TOUCH.mouseUntil = performance.now() + 800; }
+function touchState(){ return [G.state, G.stage, G.role, G.sarah, G.paused].join(':'); }
+function touchCancel(){
+  if (!TOUCH.enabled || !TOUCH.using) return;
+  const firing = TOUCH.fireHeld || TOUCH.releaseFire;
+  TOUCH.steer = null; TOUCH.fire = null; TOUCH.fireHeld = false; TOUCH.fireSeen = false; TOUCH.releaseFire = false;
+  TOUCH.skip = null; TOUCH.aim = null; TOUCH.owners.clear();
+  INPUT.mouse = null; INPUT.held = false; INPUT.down.enter = false;
+  // A canceled hold must not turn into a shot on the next unpaused simulation tick.
+  if (firing && t800){ t800.aimHeld = false; t800.aiming = false; t800.aimCancel = true; }
+  if (firing && typeof DR !== 'undefined'){ DR.aimOn = false; DR.holdT = 0; }
+}
+function touchBoundary(){
+  if (!TOUCH.enabled) return;
+  const state = touchState();
+  if (TOUCH.state !== state){ touchCancel(); TOUCH.state = state; }
+}
+function touchBeforeStep(){
+  touchBoundary();
+  if (!TOUCH.enabled || !TOUCH.using || G.state !== 'play' || G.paused) return;
+  if (TOUCH.releaseFire && TOUCH.fireSeen){
+    TOUCH.releaseFire = false; TOUCH.fireHeld = false; INPUT.held = false;
+    if (TOUCH.aim){ INPUT.mouse = {...TOUCH.aim}; INPUT.clicks.push({...TOUCH.aim}); }
+  }
+}
+function touchAfterStep(){
+  if (!TOUCH.enabled) return;
+  touchBoundary();
+  if (TOUCH.fireHeld) TOUCH.fireSeen = true;
+  if (TOUCH.using && G.state === 'play' && TOUCH.steer === null && !TOUCH.fireHeld && !TOUCH.releaseFire) INPUT.mouse = null;
+}
+function touchNames(){
+  if (drainOn()) return G.role === 't800' ? {attack:'FIRE',special:'M79'} : G.role === 't1000' ? {special:'SWIPE',secondary:'SURGE'} : {attack:'JUMP',secondary:'SLIDE'};
+  if (BS.on) return G.role === 't800' ? {attack:'FIRE',special:'HARLEY',secondary:'DASH',item:'M79'} : G.role === 't1000' ? {attack:'STAB',special:'LURE',secondary:'SLIDE'} : {attack:'FIRE / USE',special:'BOX',secondary:'ROLL'};
+  if (G.role === 't800') return {attack:'FIRE',special:'HARLEY',secondary:'CALL',swap:'SHOVE'};
+  if (G.role === 't1000') return {attack:'STAB',special:'MIMIC',secondary:lvl('slide')>0?'SLIDE':null,item:G.t1kItem?'ITEM':null};
+  return {special:G.sarah?'DECOY':'BOX',item:selectedItem()?'ITEM':null,swap:johnItems().length>1?'SWAP':null};
+}
+function touchKey(key){
+  if (!TOUCH.enabled) return key;
+  const names = touchNames();
+  return ({MOUSE:'DRAG',LMB:names.attack || 'TAP',RMB:names.special || names.secondary || 'SPECIAL','RIGHT CLICK':names.special || 'SPECIAL',SPACE:names.secondary || 'ACTION',E:names.item || 'ITEM',Q:names.swap || 'SWAP',P:'PAUSE'})[key] || key;
+}
+function touchSpecialLeft(){
+  if (drainOn()) return null; // Reusable abilities have cooldowns, not charges.
+  return !BS.on && G.sarah ? G.sarahDecoys : G.special;
+}
+function touchEnable(){
+  if (TOUCH.enabled && TOUCH.panel && !TOUCH.panel.hidden) return;
+  TOUCH.enabled = true;
+  document.body.classList.add('touch-mode');
+  TOUCH.panel.hidden = false;
+  TOUCH.state = touchState();
+  syncTouchControls(); fitCanvas();
+}
+function touchCapture(el,e){ try { el.setPointerCapture(e.pointerId); } catch (_) {} }
+function touchPoint(e){
+  const p = toBuffer(e);
+  return {x:clamp(p.x,0,W),y:clamp(p.y,0,H)};
+}
+function touchCanvasDown(e){
+  if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+  const point=e.currentTarget===canvas ? touchPoint(e) : {x:0,y:0};
+  e.preventDefault(); touchBlockMouse(); audioInit(); touchEnable(); touchBoundary(); TOUCH.using=true;
+  if (TOUCH.steer !== null) return;
+  TOUCH.steer = e.pointerId;
+  TOUCH.owners.set(e.pointerId,{el:e.currentTarget,kind:'canvas',state:touchState(),x:e.clientX,y:e.clientY,point});
+  touchCapture(e.currentTarget,e);
+  if (G.state === 'play' && !G.paused){ TOUCH.aim = point; INPUT.mouse = {...TOUCH.aim}; syncTouchControls(); }
+}
+function touchCanvasMove(e){
+  if (e.pointerId !== TOUCH.steer) return;
+  e.preventDefault(); touchBlockMouse();
+  if (G.state === 'play' && !G.paused){ TOUCH.aim = touchPoint(e); INPUT.mouse = {...TOUCH.aim}; }
+}
+function touchCanvasEnd(e,cancel=false){
+  const owner = TOUCH.owners.get(e.pointerId);
+  if (!owner || owner.kind !== 'canvas') return;
+  e.preventDefault(); touchBlockMouse(); TOUCH.owners.delete(e.pointerId); TOUCH.steer = null;
+  if (cancel){ touchCancel(); return; }
+  if (owner.state !== touchState()) return;
+  if (G.paused) return;
+  if (G.state === 'play'){
+    if (!TOUCH.fireHeld && !TOUCH.releaseFire) INPUT.mouse = null;
+  } else if (Math.hypot(e.clientX-owner.x,e.clientY-owner.y)<12){
+    INPUT.clicks.push(owner.point);
+  }
+}
+function touchButtonDown(id,e){
+  if (!TOUCH.enabled || e.currentTarget.disabled || e.currentTarget.hidden) return;
+  e.preventDefault(); touchBlockMouse(); audioInit(); touchBoundary(); TOUCH.using=true;
+  if (G.state==='play' && TOUCH.aim) INPUT.mouse={...TOUCH.aim};
+  if ([...TOUCH.owners.values()].some(o=>o.kind===id)) return;
+  TOUCH.owners.set(e.pointerId,{el:e.currentTarget,kind:id,state:touchState()}); touchCapture(e.currentTarget,e);
+  if (id==='attack'){
+    if (!TOUCH.aim || TOUCH.fireHeld || TOUCH.releaseFire) return;
+    TOUCH.fire=e.pointerId; TOUCH.fireHeld=true; TOUCH.fireSeen=false; INPUT.held=true; INPUT.mouse={...TOUCH.aim};
+  } else if (id==='skip'){
+    TOUCH.skip=e.pointerId; INPUT.down.enter=true; INPUT.keys.push('enter');
+  } else if (id==='special') INPUT.special.push(true);
+  else if (id==='secondary') INPUT.secondary.push(true);
+  else if (id==='item') INPUT.keys.push('e');
+  else if (id==='swap') INPUT.keys.push('q');
+  else if (id==='pause') { touchCancel(); INPUT.keys.push('p'); }
+  else if (id==='next') INPUT.keys.push('enter');
+  else if (id==='menu') INPUT.keys.push('m');
+  else if (id==='mute') toggleMute();
+}
+function touchButtonEnd(id,e,cancel=false){
+  const owner=TOUCH.owners.get(e.pointerId);
+  if (!owner || owner.kind!==id) return;
+  e.preventDefault(); touchBlockMouse(); TOUCH.owners.delete(e.pointerId);
+  if (cancel){ touchCancel(); return; }
+  if (id==='attack' && TOUCH.fire===e.pointerId){ TOUCH.fire=null; TOUCH.releaseFire=true; }
+  if (id==='skip' && TOUCH.skip===e.pointerId){ TOUCH.skip=null; INPUT.down.enter=false; }
+}
+function syncTouchControls(){
+  if (!TOUCH.enabled || !TOUCH.panel) return;
+  const play = G.state==='play', intro=G.state==='intro', paused=G.paused;
+  const names=(play || intro) && !paused ? touchNames() : {};
+  const labels={...names,mute:AUDIO.muted?'SOUND OFF':'SOUND ON'};
+  if (play || intro) labels.pause=paused?'RESUME':'PAUSE';
+  if (['title','map','result','death','ending'].includes(G.state)) labels.next=G.state==='death'?'RETRY':G.state==='title'?'START':'CONTINUE';
+  if (['result','death'].includes(G.state)) labels.menu='CHARACTERS';
+  if (G.state==='cutscene'){ labels.next='NEXT'; labels.skip='HOLD TO SKIP'; }
+  if (G.state==='shop') labels.next='CONTINUE';
+  const left=touchSpecialLeft();
+  if (labels.special && left!==null) labels.special+=' '+left;
+  let help=play ? (G.role==='t800'?'Drag to move / aim. Hold FIRE to aim; release to shoot.':'Drag to move / aim. Lift to stop. Tap an action button.') : 'Tap the game to choose or continue.';
+  if (intro) help='Get ready. Drag on the game to move / aim when the round starts.';
+  if (play && G.role==='t800' && t800.weapon==='minigun') help='Drag to move / aim. Hold FIRE to shoot the minigun.';
+  if (G.state==='shop') help='Tap an upgrade to buy it, then CONTINUE.';
+  if (G.state==='select'||G.state==='loopsel') help='Tap a character to select them.';
+  if (G.state==='cutscene') help='Tap NEXT for dialogue, or hold SKIP.';
+  if (paused) help='Paused. Tap RESUME when ready.';
+  if (play && G.role==='t1000' && BS.on && !drainOn() && BS.stuck) help='Frozen! Drag back and forth to break free.';
+  document.getElementById('touch-help').textContent=help;
+  let layout='';
+  for (const [id,button] of Object.entries(TOUCH.buttons)){
+    button.hidden=!labels[id];
+    if (labels[id]) layout+=id+':';
+    if (button.textContent!==labels[id]) button.textContent=labels[id]||'';
+    button.disabled=!!(names[id] && (!play || (id==='special' && left!==null && left<=0) || (id==='attack' && !TOUCH.aim)));
+    button.classList.toggle('pressed',[...TOUCH.owners.values()].some(o=>o.kind===id));
+  }
+  // Keep controls stationary when charges/cooldowns change. Refit only if rows change.
+  if (TOUCH.layout!==layout){ TOUCH.layout=layout; fitCanvas(); }
+}
+function setupTouch(){
+  TOUCH.panel=document.getElementById('touch-controls');
+  for(const id of ['attack','special','secondary','item','swap','pause','next','menu','skip','mute']){
+    const button=document.getElementById('touch-'+id); TOUCH.buttons[id]=button;
+    button.addEventListener('pointerdown',e=>touchButtonDown(id,e));
+    button.addEventListener('pointerup',e=>touchButtonEnd(id,e));
+    button.addEventListener('pointercancel',e=>touchButtonEnd(id,e,true));
+    button.addEventListener('lostpointercapture',e=>touchButtonEnd(id,e,true));
+    button.addEventListener('contextmenu',e=>e.preventDefault());
+    const keyEvent=e=>({pointerId:-1,currentTarget:button,preventDefault:()=>e.preventDefault()});
+    button.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();if(!e.repeat)touchButtonDown(id,keyEvent(e));}});
+    button.addEventListener('keyup',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();touchButtonEnd(id,keyEvent(e));}});
+  }
+  for(const el of [canvas,cinemaCanvas]){
+    el.addEventListener('pointerdown',touchCanvasDown);
+    el.addEventListener('pointermove',touchCanvasMove);
+    el.addEventListener('pointerup',e=>touchCanvasEnd(e));
+    el.addEventListener('pointercancel',e=>touchCanvasEnd(e,true));
+    el.addEventListener('lostpointercapture',e=>touchCanvasEnd(e,true));
+  }
+  window.addEventListener('blur',touchCancel);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){touchCancel();INPUT.keys.push('blur');}});
+  if (TOUCH.enabled) touchEnable();
+}
 
 // ===================== WORLD =====================
 // Solid rectangles (planters, bench): feet are pushed out and bullets stop on them.
@@ -2998,12 +3207,12 @@ function crowdSpecialHelp(){
   const sarah = sarahDecoyRound();
   const left = sarah ? G.sarahDecoys : G.special;
   if (sarah) return {left, action: 'TAG A DECOY', note: 'AIM AT A NEARBY SHOPPER'};
-  if (G.role === 't800') return {left, action: 'RIDE HARLEY', note: 'RELEASE LEFT CLICK FIRST'};
+  if (G.role === 't800') return {left, action: 'RIDE HARLEY', note: TOUCH.enabled ? 'RELEASE FIRE BEFORE HARLEY' : 'RELEASE LEFT CLICK FIRST'};
   if (G.role === 't1000') return {left, action: 'MIMIC', note: 'MOVE IN DISGUISE TO LURE JOHN'};
   return {left, action: 'HIDE IN BOX', note: 'T-1000 CAN BREAK IT - MOVE AWAY'};
 }
 function drawSpecialReminder(){
-  if (G.state !== 'play' || G.paused || BS.on || G.specialHintUsed || G.roundT >= CFG.SPECIAL_HINT_TICKS) return;
+  if (TOUCH.enabled || G.state !== 'play' || G.paused || BS.on || G.specialHintUsed || G.roundT >= CFG.SPECIAL_HINT_TICKS) return;
   const help = crowdSpecialHelp();
   if (help.left <= 0 || G.bannerT > 0 || G.toastT > 0) return;
   if (G.role === 't800' && (INPUT.held || t800.bike > 0)) return;
@@ -4937,14 +5146,14 @@ function hudKey(key, label, x, y, col){
 }
 // Width of a chip row: each part is a chip, then its label, with 6 px between parts.
 function chipRowWidth(parts){
-  return parts.reduce((s, p, i) => s + (i ? 6 : 0) + textWidth(p[0]) + 6 + (p[1] ? 3 + textWidth(p[1]) : 0), 0);
+  return parts.reduce((s, p, i) => s + (i ? 6 : 0) + textWidth(touchKey(p[0])) + 6 + (p[1] ? 3 + textWidth(p[1]) : 0), 0);
 }
 // A centred chip row: parts are [key, label] pairs, drawn at row y.
 function chipRow(parts, cx, y, labelCol){
   let x = Math.round(cx - chipRowWidth(parts) / 2);
   parts.forEach((p, i) => {
     if (i) x += 6;
-    const w = keyChip(p[0], x, y, 'd');
+    const w = keyChip(touchKey(p[0]), x, y, 'd');
     if (p[1]) text(bctx, p[1], x + w + 3, y, labelCol || '1');
     x += w + (p[1] ? 3 + textWidth(p[1]) : 0);
   });
@@ -5075,7 +5284,7 @@ function renderSelect(){
       textCentered('BEST ' + scoreText(G.best[info.sarah ? 'sarah' : info.role] || 0, 6), px+29, 146, '2');
     }
   });
-  textCentered(sarahUnlocked() ? 'CLICK OR PRESS 1 2 3 4' : 'CLICK OR PRESS 1 2 3', W/2, 156, '3');
+  textCentered(TOUCH.enabled ? 'TAP A CHARACTER' : sarahUnlocked() ? 'CLICK OR PRESS 1 2 3 4' : 'CLICK OR PRESS 1 2 3', W/2, 156, '3');
   renderSpeaker();
 }
 // SPEAKER: sound on (waves) or off (red cross) in the top-right corner of SELECT. Click toggles it.
@@ -5106,7 +5315,7 @@ function renderTitle(){
     const walk = CYCLE[((G.tick / CFG.TITLE_WALK_STEP | 0) + i) & 3];
     bctx.drawImage(sprite(info.d, 'down', walk[0], walk[1]), Math.round(CFG.TITLE_SPR_X[i] - sz/2), CFG.TITLE_SPR_Y, sz, sh);
   });
-  if (((G.tick / CFG.TITLE_BLINK) | 0) % 2 === 0) textCentered('PRESS ANY KEY OR CLICK', W/2, CFG.TITLE_PROMPT_Y, '1');
+  if (((G.tick / CFG.TITLE_BLINK) | 0) % 2 === 0) textCentered(TOUCH.enabled ? 'TAP TO START' : 'PRESS ANY KEY OR CLICK', W/2, CFG.TITLE_PROMPT_Y, '1');
   textCentered(AUDIO.muted ? 'N SOUND OFF' : 'N SOUND ON', W/2, CFG.TITLE_SOUND_Y, '2');
   textCentered(CFG.CREDIT, W/2, CFG.TITLE_CREDIT_Y, '3');
 }
@@ -5328,7 +5537,7 @@ function renderPause(){
   chipRow([['RIGHT CLICK', help.action]], W/2, 81, help.left > 0 ? '1' : '3');
   textCentered(help.left > 0 ? help.left + ' LEFT THIS ROUND' : 'USED THIS ROUND', W/2, 96, help.left > 0 ? 'd' : '3');
   if (help.left > 0) textCentered(help.note, W/2, 108, '2');
-  textCentered('P TO RESUME', W/2, 124, '1');
+  textCentered(TOUCH.enabled ? 'TAP RESUME' : 'P TO RESUME', W/2, 124, '1');
 }
 // Draw the current screen. Rendering only reads state; it never changes it.
 // RENDER GUARD: a throw in one screen's draw must not freeze the frame loop or leave a half-drawn canvas unexplained.
@@ -5355,6 +5564,7 @@ function render(){
   renderErr = null;
   guardDraw(renderScreen);
   drawRenderErr();
+  syncTouchControls();
 }
 function renderScreen(){
   bctx.imageSmoothingEnabled = false;
@@ -5376,6 +5586,19 @@ function renderScreen(){
 // Preserve aspect ratio. Touch screens fill the available space; desktop keeps integer
 // pixel scaling when it fits, and very small windows may shrink below native size.
 function fitCanvas(){
+  if (TOUCH.enabled && TOUCH.panel){
+    const css=window.getComputedStyle(document.body);
+    const w=window.innerWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight);
+    const h=window.innerHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom);
+    const landscape=window.innerWidth>window.innerHeight;
+    TOUCH.panel.style.width=(landscape?Math.min(184,w*.32):Math.min(520,w))+'px';
+    TOUCH.panel.style.maxHeight=(landscape?h:h*.48)+'px';
+    const pw=landscape?TOUCH.panel.getBoundingClientRect().width+12:0;
+    const ph=landscape?0:TOUCH.panel.getBoundingClientRect().height+12;
+    const s=Math.max(.05,Math.min((w-pw)/W,(h-ph)/H));
+    for(const el of [canvas,cinemaCanvas]){el.style.width=W*s+'px';el.style.height=H*s+'px';}
+    return;
+  }
   const fit = Math.min(window.innerWidth / W, window.innerHeight / H);
   const touch = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   const s = touch || fit < 1 ? fit : Math.floor(fit);
@@ -6105,9 +6328,12 @@ function handleGlobalKeys(){
 }
 // One fixed 1/60 step: global keys, then the screen (unless paused). Input is consumed here.
 function stepOnce(){
+  touchBeforeStep();
   handleGlobalKeys();
+  touchBoundary();
   if (!G.paused){ G.tick++; pickFrame(); if (G.hintPulse && G.hintPulse.t > 0) G.hintPulse.t--; if (G.toastT > 0) G.toastT--; if (G.headT > 0) G.headT--; }
   INPUT.clicks.length = 0; INPUT.keys.length = 0; INPUT.secondary.length = 0; INPUT.special.length = 0;
+  touchAfterStep();
 }
 // Best scores live in localStorage. If storage is blocked they last only for this page.
 function loadBest(){
@@ -6996,7 +7222,7 @@ function ciShot(g,shot,t,dur){
     ciRect(g,0,24,512,254,'navy');for(let i=0;i<8;i++)ciRect(g,0,44+i*29,512,1,'blue');
     ciFace(g,G.sarah?'sarah':G.role,0,33,2);ciRect(g,219,45,2,214,'slate');ciText(g,galleriaRoleName(),242,62,'gold',4);
     const words=galleriaRoleLine().split(' ');let line='',yy=102;for(const w of words){if((line+w).length>30){ciText(g,line,242,yy,'white',2);line='';yy+=16;}line+=w+' ';}ciText(g,line,242,yy,'white',2);
-    galleriaKeys().forEach(([k,v],i)=>{ciRect(g,242,151+i*24,k.length*8+10,17,'blue');ciText(g,k,247,155+i*24,'gold');ciText(g,v,Math.max(322,242+k.length*8+20),155+i*24,'white');});
+    galleriaKeys().forEach(([key,v],i)=>{const k=touchKey(key);ciRect(g,242,151+i*24,k.length*8+10,17,'blue');ciText(g,k,247,155+i*24,'gold');ciText(g,v,Math.max(322,242+k.length*8+20),155+i*24,'white');});
   }else if(shot==='chase'){
     ciChannel(g,t);ciTruck(g,305-p*80,102,1.5,t);ciBike(g,30+p*28,191,1,t);ciPoly(g,[[250,276],[512,214],[512,277]],'#7d8586');
   }else if(shot==='cab'){
@@ -7045,7 +7271,7 @@ function renderCut(){
   const fade=Math.max(0,1-c.pt/10,(c.pt-panel.ticks+10)/10);if(fade>0){g.globalAlpha=Math.min(1,fade);ciRect(g,0,24,512,254,'ink');g.globalAlpha=1;}
   ciRect(g,20,289,472,1,'blue');ciText(g,({galleriaIn:'01  THE GALLERIA',drainIn:'02  THE STORM DRAIN',drainOut:'AFTERMATH',millIn:'03  THE STEEL MILL',farewell:'NO FATE'})[c.scene],20,9,'slate',1);
   let off=0;cutText(panel).split('|').forEach((line,i)=>{ciText(g,line.slice(0,Math.max(0,c.typed-off)),20,303+i*15,'white',2);off+=line.length;});
-  ciText(g,c.seen?'ENTER: SKIP':'ENTER: NEXT    HOLD ESC: SKIP',20,338,'slate',1);
+  ciText(g,TOUCH.enabled?'TAP NEXT / HOLD SKIP':c.seen?'ENTER: SKIP':'ENTER: NEXT    HOLD ESC: SKIP',20,338,'slate',1);
   CUT_SCENES[c.scene].panels.forEach((_,i)=>ciRect(g,453+i*8,338,4,4,i===c.pi?'gold':'blue'));
   if(c.hold>0)ciRect(g,0,0,512*c.hold/CFG.CUT_HOLD_SKIP,2,'gold');
 }
@@ -11569,8 +11795,9 @@ G.state = 'title';
 // ?cut=drainIn|drainOut|millIn plays one scene, then returns to the title.
 const cutQ = new URLSearchParams(location.search).get('cut');
 if (cutQ && CUT_SCENES[cutQ]) startCut(cutQ, () => { G.state = 'title'; });
+setupTouch();
 fitCanvas();
-window.addEventListener('resize', fitCanvas);
+window.addEventListener('resize', () => { if (TOUCH.enabled) touchCancel(); fitCanvas(); });
 if (G.state !== 'cutscene') render();
 CINE_PORTRAIT_READY.then(() => { render(); requestAnimationFrame(frame); });
 </script>
