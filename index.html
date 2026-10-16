@@ -7,7 +7,7 @@
 <title>Terminator: Liquid Metal</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
+  body { height: 100dvh; display: flex; align-items: center; justify-content: center; }
   canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; background: #000; }
 </style>
 </head>
@@ -216,7 +216,7 @@ const CFG = {
   SPECIAL_UP_PRICE: [150, 300, 500], DOUBLE_TAKE_PRICE: 400,
   // Shop buy row: DOUBLE TAKE on the left, the role upgrade on the right, both at BUY_ROW_Y.
   BUY_ROW_Y: 148, BUY_ROW_H: 12, DOUBLE_X: 6, DOUBLE_W: 116, UPGRADE_X: 130, UPGRADE_W: 120,
-  // JOHN cardboard box: BOX_TIER_TICKS is the ride per BIGGER BOX tier (10, 13, 16, 20 s).
+  // JOHN cardboard box: duration per BIGGER BOX tier (8.5, 11, 13.5, 17 s).
   BOX_TICKS: 600, BOX_TIER_TICKS: [510, 660, 810, 1020], BOX_PTS_MUL: 1.5, BOX_SPD: 0.5, BOX_BUMP_R: 8, BOX_BUMP_TICKS: 60, BOX_BLINK: 120, BOX_GRACE: 60,
   BOX_SEARCH_TICKS: 90, BOX_NUDGE_PX: 1,   // A1: a cop whose chase is dropped walks to John's last seen point for up to BOX_SEARCH_TICKS; a cop touching the box nudges BOX_NUDGE_PX
   // BIGGER BOX tier 3 (SHUFFLE): a first cone or cop sight on the box slides it BOX_SHUFFLE_PX away from the light over BOX_SHUFFLE_T ticks.
@@ -1233,7 +1233,7 @@ function refreshHidden(){
     a.hidden = a.down === 0 && n >= need;
   }
   // BOX: a boxed John (and the one-second grace after the box) counts as hidden.
-  if (G.role === 'john' && (G.boxT > 0 || G.boxGrace > 0)) john.hidden = true;
+  if (boxProtected()) john.hidden = true;
 }
 // Move feet toward (tx,ty) at speed sp. Sets heading, facing, velocity and the walk clock.
 function walkTo(a, sp){
@@ -1762,7 +1762,7 @@ function stepDash(a){
   a.tx = a.dashX; a.ty = a.dashY;
   walkTo(a, CFG.T_LUNGE_SPD * G.speedMul);
   // BOX: a boxed John is not grabbed; the T-1000 can only flip the box (boxTouch).
-  if (!john.riding && !boxed() && dist(a.x, a.y, john.x, john.y) <= CFG.T_GRAB_R){
+  if (!john.riding && !boxProtected() && dist(a.x, a.y, john.x, john.y) <= CFG.T_GRAB_R){
     loseRound(terminatedWhy(), john, a); a.moving = false; a.lungeDash = 0;
   }
 }
@@ -1841,7 +1841,7 @@ function aiCop(a){
   // NITRO HARLEY BONK: a stunned cop stands still until stunT runs out.
   if (a.stunT > 0){ a.stunT--; a.moving = false; a.vx = 0; a.vy = 0; return; }
   // BOX: a boxed John (or in BOX_GRACE) cannot be caught. Any chase is dropped: the cop walks to his last seen point, then patrols.
-  if (boxed() || G.boxGrace > 0){
+  if (boxProtected()){
     if (a.chase){ a.chase = false; a.cHid = 0; a.searchX = john.x; a.searchY = john.y; a.searchT = CFG.BOX_SEARCH_TICKS; floatAt(a.x - 4, a.y - 30, '?', 'd'); }
     if ((a.searchT || 0) > 0 && dist(a.x, a.y, a.searchX, a.searchY) > 4){
       a.searchT--; a.tx = a.searchX; a.ty = a.searchY; walkTo(a, CFG.COP_SPD * copMul()); return;
@@ -1870,7 +1870,7 @@ function aiCop(a){
     patrolStep(a, true);
     return;
   }
-  if (!boxed() && G.boxGrace <= 0 && dist(a.x, a.y, john.x, john.y) <= CFG.COP_BUSTED_R){ loseRound('BUSTED', john, a); a.moving = false; return; }
+  if (!boxProtected() && dist(a.x, a.y, john.x, john.y) <= CFG.COP_BUSTED_R){ loseRound('BUSTED', john, a); a.moving = false; return; }
   a.tx = john.x; a.ty = john.y;
   walkTo(a, CFG.COP_CHASE_SPD * copMul());
 }
@@ -2052,7 +2052,7 @@ function spawnBullet(x, y, ang, owner, spd, mini){
 // Damage John: one heart and a blink-invulnerable window. Zero hearts is a loss. A rider cannot be hit.
 function damageJohn(){
   // BOX: cardboard stops every shot while John is boxed (and in BOX_GRACE).
-  if (john.invuln > 0 || john.riding || boxed() || G.boxGrace > 0) return;
+  if (john.invuln > 0 || john.riding || boxProtected()) return;
   john.hearts--;
   G.run.hearts++;
   sfx('hurt');
@@ -2575,7 +2575,7 @@ function updateExposure(){
     if (coneLive(w) && inCone(w, w.coneAng, john.x, john.y - 6, coneR(), CFG.CONE_HALF)) seen = true;  }
   john.seen = seen;
   // BOX: a boxed John (and BOX_GRACE) never gains exposure and never starts a chase.
-  const boxSafe = boxed() || G.boxGrace > 0;
+  const boxSafe = boxProtected();
   if (seen && !john.hidden && !inGrace() && !boxSafe) G.exposure = Math.min(1, G.exposure + CFG.EXPOSE_UP);
   else G.exposure = Math.max(0, G.exposure - CFG.EXPOSE_DOWN);
   if (G.exposure >= 1 && !boxSafe){
@@ -2753,20 +2753,32 @@ function staggerT1000(){
 }
 // BOX: is John boxed right now (JOHN round, timer running)?
 function boxed(){ return G.role === 'john' && G.boxT > 0; }
-// BOX timer: counts down, and the timer's end gives a '!' floater and a BOX_GRACE window where cones cannot catch him.
+// Every enemy hit respects the same protection, including the escape second after it ends.
+function boxProtected(){ return G.role === 'john' && (G.boxT > 0 || G.boxGrace > 0); }
+function endBox(broken){
+  G.boxT = 0; G.boxGrace = CFG.BOX_GRACE; G.boxSlide = null;
+  const msg = broken ? 'BOX BROKEN - MOVE' : 'BOX ENDED - MOVE';
+  G.toastTxt = msg; G.toastT = CFG.BOX_GRACE;
+  const x = clamp(Math.round(john.x - textWidth(msg) / 2), 2, W - textWidth(msg) - 2);
+  floatAt(x, john.y - 30, msg, broken ? 'b' : 'd');
+}
+// BOX timer: expiry announces the escape window; every enemy hit respects it.
 function stepBox(){
   if (G.boxGrace > 0) G.boxGrace--;
   if (G.boxT <= 0) return;
   G.boxT--;
-  if (G.boxT === 0){ G.boxGrace = CFG.BOX_GRACE; floatAt(john.x - 4, john.y - 30, '!', 'd'); }
+  if (G.boxT === 0) endBox(false);
 }
-// BOX flip: a T-1000 touching the box flips it open, '!' and John is exposed, so a cop chases at once.
+// A standing T-1000 can break the box. Disabled/reforming bodies cannot, and
+// discovery gives the same escape second as expiry instead of an instant forced chase.
 function boxTouch(){
-  if (!boxed() || !t1000 || dist(john.x, john.y, t1000.x, t1000.y) > CFG.BOX_BUMP_R) return;
-  G.boxT = 0; G.boxGrace = 0;
-  floatAt(john.x - 4, john.y - 30, '!', 'b');
-  const c = pickChaser();
-  if (c) startChase(c);
+  if (!boxed() || !t1000 || t1000.down > 0 || t1000.frozen ||
+      !['patrol', 'stalk'].includes(t1000.st) ||
+      dist(john.x, john.y, t1000.x, t1000.y) > CFG.BOX_BUMP_R ||
+      !playerShoveClear(t1000, john)) return;
+  endBox(true);
+  t1000.lungeWind = 0; t1000.lungeDash = 0;
+  t1000.lungeCD = Math.max(t1000.lungeCD, CFG.BOX_GRACE);
 }
 // Can John's box stand on (x,y)? Inside the walls and the feet band, and clear of the solids.
 function boxFloorClear(x, y){
@@ -2988,7 +3000,7 @@ function crowdSpecialHelp(){
   if (sarah) return {left, action: 'TAG A DECOY', note: 'AIM AT A NEARBY SHOPPER'};
   if (G.role === 't800') return {left, action: 'RIDE HARLEY', note: 'RELEASE LEFT CLICK FIRST'};
   if (G.role === 't1000') return {left, action: 'MIMIC', note: 'MOVE IN DISGUISE TO LURE JOHN'};
-  return {left, action: 'HIDE IN BOX', note: 'BRIEF COVER WHILE YOU MOVE'};
+  return {left, action: 'HIDE IN BOX', note: 'T-1000 CAN BREAK IT - MOVE AWAY'};
 }
 function drawSpecialReminder(){
   if (G.state !== 'play' || G.paused || BS.on || G.specialHintUsed || G.roundT >= CFG.SPECIAL_HINT_TICKS) return;
@@ -3105,7 +3117,8 @@ MODES.john = {
   },
   hud(){
     const hot = G.exposure > 0.66;
-    if (john.hidden) text(bctx, 'HIDDEN', 4, HUD_Y+4, 'f');
+    if (boxProtected()) text(bctx, boxed() ? 'BOXED' : 'ESCAPE', 4, HUD_Y+4, boxed() ? 'f' : 'd');
+    else if (john.hidden) text(bctx, 'HIDDEN', 4, HUD_Y+4, 'f');
     else text(bctx, 'EXPOSED', 4, HUD_Y+4, hot ? 'b' : 'd');
     bctx.fillStyle = PAL['3']; bctx.fillRect(40, HUD_Y+4, 62, 5);
     bctx.fillStyle = PAL['0']; bctx.fillRect(41, HUD_Y+5, 60, 3);
@@ -5360,9 +5373,12 @@ function renderScreen(){
   if (G.paused) renderPause();
   if (G.debug) drawDebug();
 }
-// Integer-scale the 256x176 canvas to the largest size that fits the window, centred by CSS.
+// Preserve aspect ratio. Touch screens fill the available space; desktop keeps integer
+// pixel scaling when it fits, and very small windows may shrink below native size.
 function fitCanvas(){
-  const s = Math.max(1, Math.floor(Math.min(window.innerWidth / W, window.innerHeight / H)));
+  const fit = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const touch = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  const s = touch || fit < 1 ? fit : Math.floor(fit);
   canvas.style.width = (W*s) + 'px';
   canvas.style.height = (H*s) + 'px';
   cinemaCanvas.style.width = (W*s) + 'px';
@@ -8943,7 +8959,7 @@ function millHurtPlayer(){
     BS.slowT = CFG.MILL_EMBER_SLOW; floatAt(t1000.x - 6, t1000.y - 34, 'SSS', 'b'); sfx('hiss');
     return true;
   }
-  if (G.role === 'john') return johnHurt('OUCH');
+  if (G.role === 'john') return johnHurt('OUCH', true);
   return millHurt();
 }
 // Ember showers: a few embers fall at random floor spots every interval, and each lands after MILL_EMBER_FALL ticks.
@@ -9306,11 +9322,12 @@ function millSarahShot(s){
     return;
   }
   BS.kneelT = CFG.MILL_KNEEL; s.limp = true;
-  johnHurt('MOM!');
+  johnHurt('MOM!', true);
 }
-// John takes one heart (a lunge, a finisher slug, the fake, the real Sarah). I-frames and the roll dodge it. Zero hearts ends the round.
-function johnHurt(txt){
-  if (john.hearts <= 0 || BS.jinv > 0 || BS.rollT > 0) return false;
+// Enemy hits respect the box and its exit grace. Environmental hazards and the
+// penalty for shooting real Sarah bypass cover; i-frames and rolls still apply.
+function johnHurt(txt, bypassBox = false){
+  if (john.hearts <= 0 || BS.jinv > 0 || BS.rollT > 0 || (!bypassBox && boxProtected())) return false;
   john.hearts--; BS.jinv = CFG.MILL_HURT; john.flashT = 6;
   sfx('hurt'); floatAt(john.x - 6, john.y - 34, txt, 'b');
   if (john.hearts <= 0){ loseRound('JOHN TERMINATED', john, t1000); enterResult({win: false, title: 'JOHN TERMINATED'}); }
@@ -9458,7 +9475,8 @@ function millJohnInput(){
   if (BS.fireCD > 0) BS.fireCD--;
   if (BS.valveCD > 0) BS.valveCD--;
   if (BS.rollCD > 0) BS.rollCD--;
-  if (BS.lostT > 0) BS.lostT--;
+  if (G.boxGrace > 0) G.boxGrace--;
+  if (BS.lostT > 0 && --BS.lostT === 0) endBox(false);
   if (BS.spray){ BS.spray.t--; if (BS.spray.t <= 0) BS.spray = null; }
   // Shells come back one at a time while any are missing.
   if (BS.shells < johnShells()){
@@ -9468,7 +9486,7 @@ function millJohnInput(){
   } else BS.reloadT = 0;
   // RMB boxes John for MILL_BOX_TICKS and costs a special. It uses the same box as the other rounds.
   if (INPUT.special.length && BS.lostT <= 0){
-    if (G.special > 0){ G.special--; BS.lostT = CFG.MILL_BOX_TICKS; specialBanner('CARDBOARD BOX', 'box'); }
+    if (G.special > 0){ G.special--; G.boxGrace = 0; BS.lostT = CFG.MILL_BOX_TICKS; specialBanner('CARDBOARD BOX', 'box'); }
     else sfx('buzzer');
   }
   G.boxT = BS.lostT;
@@ -9612,7 +9630,7 @@ function stepMillRoleJohn(){
   // The T-1000 is melted out of sight during a Sarah event, so it does not act.
   if (!BS.ev){
     // A boxed John hides the T-1000's target: it walks to a Sarah spot instead of attacking.
-    if (BS.lostT > 0) millLostWalk(); else millStepBody();
+    if (boxProtected()) millLostWalk(); else millStepBody();
     if (G.state !== 'play') return;
   }
   millStepBlades();

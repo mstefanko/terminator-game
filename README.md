@@ -4,7 +4,7 @@ A single-file arcade fan game inspired by Terminator 2: Judgment Day. Sneak thro
 
 **[Play in your browser](https://mstefanko.github.io/terminator-game/)**
 
-Use a desktop browser with a mouse and keyboard. Click or press a key to start and enable audio. The game draws its own pixel art, embeds the cinematic portraits, and synthesizes its soundtrack; no installation or asset downloads are needed.
+Use a desktop browser with a mouse and keyboard. The layout fits phone-sized screens, but full touch gameplay controls are not implemented yet. Click or press a key to start and enable audio. The game draws its own pixel art, embeds the cinematic portraits, and synthesizes its soundtrack; no installation or asset downloads are needed.
 
 ## Controls
 
@@ -26,6 +26,8 @@ Each level's briefing shows the controls for that character and encounter.
 Crowd levels spell out **RIGHT CLICK** in the briefing and show a four-second reminder above the action. The reminder fades away or disappears as soon as the ability is used. Press **P** to check its action and remaining uses; there is no permanent special-ability box over the game.
 
 On the storm drain, the T-800 has unlimited M79 grenades on right click, E, or Space, with a short reload. Hold left click to brake and aim; hit the truck during an attack for double damage.
+
+The cardboard box protects John from enemy attacks. A standing T-1000 can break it on contact; frozen, downed, or reforming enemies cannot. Breaking or expiring shows a warning and gives one second to escape. Steel-mill fire and environmental hazards still hurt through the box.
 
 Sarah unlocks after completing the game. Progress and high scores are saved in your browser on that device; opening a local copy and the hosted game uses separate saves.
 
