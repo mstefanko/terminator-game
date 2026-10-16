@@ -211,7 +211,7 @@ const CFG = {
   THEME_STROBE_PERIOD: 30, THEME_STROBE_HALF: 15, THEME_STROBE_ALPHA: 0.25,
   THEME_EXIT_X: 200, THEME_EXIT_Y: 84, THEME_EXIT_CYCLE: 5, THEME_EXIT_OFF: 2,
   // 6.2 specials. Right-click is the special (G.special, refilled to SPECIAL_MAX each crowd round); SPACE is the role move.
-  SPECIAL_MAX: 1, SPECIAL_BANNER: 90, SPECIAL_FLASH: 6, SPECIAL_X: 30,
+  SPECIAL_MAX: 1, SPECIAL_BANNER: 90, SPECIAL_FLASH: 6, SPECIAL_HINT_TICKS: 240, SPECIAL_HINT_FADE: 60,
   // Pass 9 shop: role special upgrades (tier 1 to 3 prices) and DOUBLE TAKE (one extra charge for the next round).
   SPECIAL_UP_PRICE: [150, 300, 500], DOUBLE_TAKE_PRICE: 400,
   // Shop buy row: DOUBLE TAKE on the left, the role upgrade on the right, both at BUY_ROW_Y.
@@ -1045,7 +1045,7 @@ const G = {
   itemSel: 'alarm', toastT: 0, toastTxt: '', shopBought: '',
   // Pass 6 specials: charges left (right-click), the white flash ticks, the bike stagger cooldown,
   // John's cardboard box (ticks left, grace after it ends, flip-open flag), and the T-1000 lure ticks.
-  special: 1, specialFlashT: 0, bikeCD: 0, boxT: 0, boxGrace: 0, lureT: 0,
+  special: 1, specialHintUsed: false, specialFlashT: 0, bikeCD: 0, boxT: 0, boxGrace: 0, lureT: 0,
   // 7A-1 campaign: stage index (0..7 into STAGES), loop (1+), mode ('crowd' or 'boss'), stages cleared (kept across loops),
   // the furthest node reached (kept across loops), the map walker's node and walk timer, the boss card timer, the boss id, the ending timer.
   stage: 0, loop: 1, mode: 'crowd', done: {}, reach: 0, mapAt: -1, mapT: 0, mapPhase: 'walk', mapNext: 'intro',
@@ -2693,7 +2693,7 @@ function stepSpecial(){
   if (G.role === 't800' && (INPUT.held || t800.bike > 0 || t800.shoveWind > 0 || t800.shoveRecover > 0 || (!BS.on && hasKey('q')))) return;
   if (G.role === 'john' && G.boxT > 0) return;
   if (G.role === 't1000' && (G.lureT > 0 || !mallT1000Actionable())) return;
-  G.special--; G.specialFlashT = CFG.SPECIAL_FLASH;
+  G.special--; G.specialHintUsed = true; G.specialFlashT = CFG.SPECIAL_FLASH;
   if (G.role === 'john') activateBox();
   else if (G.role === 't800') activateBike();
   else activateLure();
@@ -2864,7 +2864,7 @@ function placeDecoy(){
   }
   if (!target || bd > CFG.SARAH_DECOY_TAG_R){ floatAt(john.x - 12, john.y - 30, 'NO ONE HERE', 'b'); return; }
   if (dist(target.x, target.y, t1000.x, t1000.y) < CFG.SARAH_DECOY_MIN){ floatAt(john.x - 12, john.y - 30, 'TOO CLOSE', 'b'); return; }
-  G.sarahDecoys--; G.specialFlashT = CFG.SPECIAL_FLASH;
+  G.sarahDecoys--; G.specialHintUsed = true; G.specialFlashT = CFG.SPECIAL_FLASH;
   // The jacket flies from Sarah to the cursor in a 14-tick arc; the decoy stands once the jacket lands.
   target.jacketFly = {x0: john.x, y0: john.y - CFG.DECOY_Y, x1: m.x, y1: m.y, t: 0};
   target.decoyMax = decoyTicks(); target.decoyT = target.decoyMax; target.jacketDown = 0;
@@ -2961,7 +2961,7 @@ function decoyStab(a){
   walkTo(a, CFG.COP_SPD * copMul());
   return true;
 }
-// Each role's special: the name for the intro line and the icon for the HUD slot.
+// Each role's special: the briefing name and cached art identifier.
 const SPECIALS = {john: {name: 'CARDBOARD BOX', icon: 'sp_box'}, t800: {name: 'HARLEY', icon: 'sp_bike'}, t1000: {name: 'MIMIC', icon: 'sp_lure'}};
 // Sarah's special is her jacket decoys. The slot draws jackets rather than an icon, so there is no icon here.
 const SARAH_SPECIAL = {name: 'JACKET DECOYS', icon: null};
@@ -2980,28 +2980,29 @@ function slotChip(key, x, y, col){
   text(bctx, key, x + 5, y + 3, col);
   return w;
 }
-// SPECIAL SLOT: above the floor, right of John's item slot. RMB chip on top, the icon and charges below. Greyed when spent.
-function drawSpecialSlot(){
-  const sarahSlot = sarahDecoyRound();
-  const sp = roleSpecial();
-  const x = CFG.SPECIAL_X, y = CFG.ITEM_Y;
-  const left = sarahSlot ? G.sarahDecoys : G.special;
-  const ok = left > 0;
-  slotBox(x, y, ok ? '1' : '3');
-  slotChip('RMB', x, y, ok ? '1' : '3');
-  if (sarahSlot){
-    // Sarah's jackets: blue while she has one, grey once it is thrown. One row under the chip.
-    for (let i = 0; i < sarahDecoyMax(); i++){
-      const jx = x + 4 + i * 4, jy = y + 14, on = i < left;
-      fillBox(jx, jy, 3, 5, on ? '8' : '3');
-      fillBox(jx + 1, jy, 1, 1, on ? '1' : '4');
-    }
-  } else {
-    bctx.globalAlpha = ok ? 1 : 0.35;
-    bctx.drawImage(ICON(sp.icon), x + 2, y + 10);
-    bctx.globalAlpha = 1;
-    text(bctx, String(G.special), x + 16, y + 14, ok ? '2' : '3');
-  }
+// Short, plain-language teaching hint. No permanent ability box covers the scenery.
+// The pause card keeps the same action and live charge count available after this fades.
+function crowdSpecialHelp(){
+  const sarah = sarahDecoyRound();
+  const left = sarah ? G.sarahDecoys : G.special;
+  if (sarah) return {left, action: 'TAG A DECOY', note: 'AIM AT A NEARBY SHOPPER'};
+  if (G.role === 't800') return {left, action: 'RIDE HARLEY', note: 'RELEASE LEFT CLICK FIRST'};
+  if (G.role === 't1000') return {left, action: 'MIMIC', note: 'MOVE IN DISGUISE TO LURE JOHN'};
+  return {left, action: 'HIDE IN BOX', note: 'BRIEF COVER WHILE YOU MOVE'};
+}
+function drawSpecialReminder(){
+  if (G.state !== 'play' || G.paused || BS.on || G.specialHintUsed || G.roundT >= CFG.SPECIAL_HINT_TICKS) return;
+  const help = crowdSpecialHelp();
+  if (help.left <= 0 || G.bannerT > 0 || G.toastT > 0) return;
+  if (G.role === 't800' && (INPUT.held || t800.bike > 0)) return;
+  if (G.role === 't1000' && (!mallT1000Actionable() || G.lureT > 0)) return;
+  const parts = [['RIGHT CLICK', help.action + ' - ' + help.left + ' LEFT']];
+  const width = chipRowWidth(parts), x = Math.round((W - width) / 2);
+  bctx.save();
+  bctx.globalAlpha = Math.min(1, (CFG.SPECIAL_HINT_TICKS - G.roundT) / CFG.SPECIAL_HINT_FADE);
+  fillBox(x - 3, 16, width + 6, 13, '0');
+  chipRow(parts, W / 2, 20, '2');
+  bctx.restore();
 }
 // BOXED JOHN: the box sprite at his feet, eyes in the hand hole while he moves, and the timer bar over it (blinks in the last BOX_BLINK ticks).
 function drawBoxed(a){
@@ -4959,7 +4960,7 @@ function drawItemSlot(){
   const key = selectedItem();
   if (!key) return;
   const x = CFG.ITEM_X, y = CFG.ITEM_Y, ok = itemReady(key);
-  // 11A: the same slot box as the special: the E chip on top, the icon and uses left below.
+  // E chip on top, with the held item and uses left below.
   slotBox(x, y, '1');
   bctx.globalAlpha = ok ? 1 : 0.35;
   bctx.drawImage(ICON('up_' + key), x + 2, y + 10);
@@ -5019,7 +5020,7 @@ function drawWorld(){
   drawFloaters();
   if (G.role === 'john' && (G.state === 'play' || G.state === 'intro')) { drawItemSlot(); drawItemReminder(); }
   if (G.role === 't1000' && G.state === 'play') { drawT1kSlot(); drawT1kPortrait(); }
-  if (G.state === 'play') drawSpecialSlot();
+  drawSpecialReminder();
   drawToast();
   if (G.state === 'play' && G.grace > 0) textBacked('READY', Math.round(W/2 - textWidth('READY')/2), CFG.READY_Y, '1', true);
   if (G.state === 'play') drawBanner();
@@ -5134,15 +5135,19 @@ function renderIntro(){
     parts.push(['MOUSE', 'STEER']);
     if (sel) parts.push(['E', 'ITEM']);
     if (sel && johnItems().length > 1) parts.push(['Q', 'SWAP']);
-    if (sp) parts.push(['RMB', sarahDecoyRound() ? 'DECOY' : 'BOX']);
+    if (sp) parts.push(['RIGHT CLICK', sarahDecoyRound() ? 'DECOY' : 'BOX']);
   } else if (G.role === 't800'){
-    parts.push(['LMB', 'SHOOT'], ['Q', 'SHOVE'], ['RMB', 'HARLEY'], ['SPACE', 'CALL']);
+    parts.push(['LMB', 'SHOOT'], ['Q', 'SHOVE'], ['RIGHT CLICK', 'HARLEY'], ['SPACE', 'CALL']);
   } else if (G.role === 't1000'){
-    parts.push(['LMB', 'STAB'], ['RMB', 'MIMIC']);
+    parts.push(['LMB', 'STAB'], ['RIGHT CLICK', 'MIMIC']);
     if (lvl('slide') > 0) parts.push(['SPACE', 'SLIDE']);
   }
-  if (G.role === 't800'){ chipRow(parts.slice(0,2), W/2, 138, '1'); chipRow(parts.slice(2), W/2, 150, '1'); }
-  else if (parts.length) chipRow(parts, W/2, 144, '1');
+  parts.push(['P', 'HELP']);
+  if (G.role === 't800' || chipRowWidth(parts) > 208){
+    const split = G.role === 't800' ? 2 : Math.ceil(parts.length / 2);
+    chipRow(parts.slice(0, split), W/2, 138, '1');
+    chipRow(parts.slice(split), W/2, 150, '1');
+  } else chipRow(parts, W/2, 144, '1');
 }
 // Breakdown rows for the result screen: each role lists its own score parts.
 function resultRows(){
@@ -5299,8 +5304,18 @@ function nextLabel(){
 }
 // PAUSED overlay.
 function renderPause(){
-  overlayBox(88, 70, 80, 30);
-  bigCentered('PAUSED', W/2, 80, '1', '2');
+  if (G.state !== 'play' || BS.on){
+    overlayBox(88, 70, 80, 30);
+    bigCentered('PAUSED', W/2, 80, '1', '2');
+    return;
+  }
+  const help = crowdSpecialHelp();
+  overlayBox(24, 46, 208, 91);
+  bigCentered('PAUSED', W/2, 55, '1', '2');
+  chipRow([['RIGHT CLICK', help.action]], W/2, 81, help.left > 0 ? '1' : '3');
+  textCentered(help.left > 0 ? help.left + ' LEFT THIS ROUND' : 'USED THIS ROUND', W/2, 96, help.left > 0 ? 'd' : '3');
+  if (help.left > 0) textCentered(help.note, W/2, 108, '2');
+  textCentered('P TO RESUME', W/2, 124, '1');
 }
 // Draw the current screen. Rendering only reads state; it never changes it.
 // RENDER GUARD: a throw in one screen's draw must not freeze the frame loop or leave a half-drawn canvas unexplained.
@@ -5818,6 +5833,7 @@ function startIntro(){
   G.state = 'intro'; G.introT = 0; G.lossWhy = ''; G.winWhy = ''; G.outcome = null; G.mode = 'crowd';
   G.lossAt = null; G.lossKiller = null; G.runPrev = null;
   G.grace = CFG.GRACE_TICKS;
+  G.specialHintUsed = false;
   G.heatStage = 0; G.heatFrac = 0; G.bannerT = 0; G.bannerTxt = ''; G.evacT = 0; G.roundT = 0; G.pickupN = 0;
   // Per-round upgrade state: FIRE ALARM and GAME BOY reset, LIQUID SLIDE cooldown clears, MIMIC hold lifts.
   G.alarmUsed = false; G.alarmT = 0; G.decoy = null; G.slideCD = 0; G.t800Hold = false;
@@ -6482,10 +6498,10 @@ function galleriaRoleLine(){
   return 'HIDE - GET ' + CFG.GALLERIA_QUARTERS + ' QUARTERS - GET OUT';
 }
 function galleriaKeys(){
-  if (G.sarah) return [['MOUSE', 'STEER'], ['RMB', 'DECOY']];
-  if (G.role === 't800') return [['LMB', 'SHOOT'], ['Q', 'SHOVE'], ['RMB', 'HARLEY'], ['SPACE', 'CALL']];
-  if (G.role === 't1000') return [['LMB', 'STAB'], ['RMB', 'MIMIC']];
-  return [['MOUSE', 'STEER'], ['RMB', 'BOX']];
+  if (G.sarah) return [['MOUSE', 'STEER'], ['RIGHT CLICK', 'DECOY']];
+  if (G.role === 't800') return [['LMB', 'SHOOT'], ['Q', 'SHOVE'], ['RIGHT CLICK', 'HARLEY'], ['SPACE', 'CALL']];
+  if (G.role === 't1000') return [['LMB', 'STAB'], ['RIGHT CLICK', 'MIMIC']];
+  return [['MOUSE', 'STEER'], ['RIGHT CLICK', 'BOX']];
 }
 // A car at x (its front on the left), body in colour lo, glass in colour hi. Drawn at 1x.
 function cutCar(g, x, y, lo, hi){
@@ -6964,7 +6980,7 @@ function ciShot(g,shot,t,dur){
     ciRect(g,0,24,512,254,'navy');for(let i=0;i<8;i++)ciRect(g,0,44+i*29,512,1,'blue');
     ciFace(g,G.sarah?'sarah':G.role,0,33,2);ciRect(g,219,45,2,214,'slate');ciText(g,galleriaRoleName(),242,62,'gold',4);
     const words=galleriaRoleLine().split(' ');let line='',yy=102;for(const w of words){if((line+w).length>30){ciText(g,line,242,yy,'white',2);line='';yy+=16;}line+=w+' ';}ciText(g,line,242,yy,'white',2);
-    galleriaKeys().forEach(([k,v],i)=>{ciRect(g,242,151+i*24,k.length*8+10,17,'blue');ciText(g,k,247,155+i*24,'gold');ciText(g,v,322,155+i*24,'white');});
+    galleriaKeys().forEach(([k,v],i)=>{ciRect(g,242,151+i*24,k.length*8+10,17,'blue');ciText(g,k,247,155+i*24,'gold');ciText(g,v,Math.max(322,242+k.length*8+20),155+i*24,'white');});
   }else if(shot==='chase'){
     ciChannel(g,t);ciTruck(g,305-p*80,102,1.5,t);ciBike(g,30+p*28,191,1,t);ciPoly(g,[[250,276],[512,214],[512,277]],'#7d8586');
   }else if(shot==='cab'){

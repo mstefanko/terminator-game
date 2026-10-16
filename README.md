@@ -19,9 +19,11 @@ Each level's briefing shows the controls for that character and encounter.
 | Use held item | E |
 | Cycle John's items | Q |
 | Context action (call, slide, surge) | Space |
-| Pause | P |
+| Pause / ability help | P |
 | Mute / unmute | N |
 | Skip a cinematic | Hold Enter or Escape |
+
+Crowd levels spell out **RIGHT CLICK** in the briefing and show a four-second reminder above the action. The reminder fades away or disappears as soon as the ability is used. Press **P** to check its action and remaining uses; there is no permanent special-ability box over the game.
 
 On the storm drain, the T-800 has unlimited M79 grenades on right click, E, or Space, with a short reload. Hold left click to brake and aim; hit the truck during an attack for double damage.
 
